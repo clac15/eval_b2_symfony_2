@@ -32,6 +32,10 @@ final class EventController extends AbstractController
             // À l'ajout, l'événement n'est pas validé
             $event->setValidated(false);
 
+            if ($this->getUser()) {
+                $event->setAuthor($this->getUser());
+            }
+
             $entityManager->persist($event);
             $entityManager->flush();
 
@@ -72,13 +76,58 @@ final class EventController extends AbstractController
 
     #[Route('/evenement/{id}/desinscription', name: 'app_event_unregister', methods: ['POST'])]
     #[IsGranted('ROLE_USER')]
-    public function unregister(Event $event, EntityManagerInterface $entityManager): Response
+    public function unregister(Event $event, Request $request, EntityManagerInterface $entityManager): Response
     {
         $event->removeParticipant($this->getUser());
         $entityManager->flush();
 
         $this->addFlash('success', 'Vous êtes désinscrit de cet événement.');
 
-        return $this->redirectToRoute('app_event_show', ['id' => $event->getId()]);
+        return $this->redirect($request->headers->get('referer'));
     }
+
+    #[Route('/mes-inscriptions', name: 'app_my_events')]
+    #[IsGranted('ROLE_USER')]
+    public function mine(): Response
+    {
+        return $this->render('event/mine.html.twig', [
+            'events' => $this->getUser()->getEvents(),
+        ]);
+    }
+
+    #[Route('/evenement/{id}/modifier', name: 'app_event_edit')]
+    #[IsGranted('ROLE_USER')]
+    public function edit(Event $event, Request $request, EntityManagerInterface $entityManager): Response
+    {
+        if ($event->getAuthor() !== $this->getUser() && !$this->isGranted('ROLE_ADMIN')) {
+            throw $this->createAccessDeniedException();
+        }
+
+        $form = $this->createForm(EventType::class, $event);
+        $form->handleRequest($request);
+
+        if ($form->isSubmitted() && $form->isValid()) {
+            $this->saveImage($form->get('image')->getData(), $event);
+            $entityManager->flush();
+
+            $this->addFlash('success', 'L\'événement a été modifié.');
+
+            return $this->redirectToRoute('app_event_show', ['id' => $event->getId()]);
+        }
+
+        return $this->render('event/edit.html.twig', [
+            'event' => $event,
+            'form' => $form,
+        ]);
+    }
+
+    private function saveImage($imageFile, Event $event): void
+    {
+        if ($imageFile) {
+            $fileName = uniqid().'.'.$imageFile->guessExtension();
+            $imageFile->move($this->getParameter('kernel.project_dir').'/public/uploads', $fileName);
+            $event->setImage($fileName);
+        }
+    }
+
 }
